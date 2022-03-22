@@ -1350,7 +1350,17 @@ public class InAppBrowser extends CordovaPlugin {
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
-            String newloc = url;
+            String newloc = "";
+            if (url.startsWith("http:") || url.startsWith("https:") || url.startsWith("file:")) {
+                newloc = url;
+            }
+            else
+            {
+                // Assume that everything is HTTP at this point, because if we don't specify,
+                // it really should be.  Complain loudly about this!!!
+                LOG.e(LOG_TAG, "Possible Uncaught/Unknown URI");
+                newloc = "http://" + url;
+            }
 
             // Update the UI if we haven't already
             if (!newloc.equals(edittext.getText().toString())) {
