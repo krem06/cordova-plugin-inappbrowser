@@ -998,9 +998,6 @@ public class InAppBrowser extends CordovaPlugin {
                 inAppWebView.setId(Integer.valueOf(6));
                 inAppWebView.getSettings().setLoadWithOverviewMode(true);
                 inAppWebView.getSettings().setUseWideViewPort(useWideViewPort);
-                // Multiple Windows set to true to mitigate Chromium security bug.
-                //  See: https://bugs.chromium.org/p/chromium/issues/detail?id=1083819
-                inAppWebView.getSettings().setSupportMultipleWindows(true);
                 inAppWebView.requestFocus();
                 inAppWebView.requestFocusFromTouch();
 
@@ -1142,7 +1139,97 @@ public class InAppBrowser extends CordovaPlugin {
         @TargetApi(Build.VERSION_CODES.N)
         @Override
         public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
-            return shouldOverrideUrlLoading(request.getUrl().toString(), request.getMethod());
+            String url = request.getUrl().toString();
+
+            if (url.startsWith("http") || url.startsWith("https") ) return false;//open web links as usual
+
+            // If activity exists for a browsable URL then open the URL.
+            Uri parsedUri = Uri.parse(url);
+            PackageManager packageManager = cordova.getActivity().getPackageManager();
+            Intent browseIntent = new Intent(Intent.ACTION_VIEW).setData(parsedUri);
+            if (browseIntent.resolveActivity(packageManager) != null) {
+                    cordova.getActivity().startActivity(browseIntent);
+                    return true;
+            }
+
+            webView.loadUrl("javascript:console.log('Custom Intent click: " + url + "');");
+            if (url.startsWith(WebView.SCHEME_TEL)) {
+                webView.loadUrl("javascript:console.log('Clicked scheme: " + WebView.SCHEME_TEL + "');");
+                try {
+                    Intent intent = new Intent(Intent.ACTION_DIAL);
+                    intent.setData(Uri.parse(url));
+                    cordova.getActivity().startActivity(intent);
+                    return true;
+                } catch (android.content.ActivityNotFoundException e) {
+                    LOG.e(LOG_TAG, "Error dialing " + url + ": " + e.toString());
+                }
+            } else if (url.startsWith("geo:") || url.startsWith(WebView.SCHEME_MAILTO) || url.startsWith("market:")) {
+                webView.loadUrl("javascript:console.log('Clicked scheme: " + WebView.SCHEME_TEL + " OR " + WebView.SCHEME_MAILTO + " OR market:');");
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                    intent.setData(Uri.parse(url));
+                    cordova.getActivity().startActivity(intent);
+                    return true;
+                } catch (android.content.ActivityNotFoundException e) {
+                    LOG.e(LOG_TAG, "Error with " + url + ": " + e.toString());
+                }
+            } else if (url.startsWith("sms:")) {
+                webView.loadUrl("javascript:console.log('Clicked scheme: sms');");
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW);
+
+                    // Get address
+                    String address = null;
+                    int parmIndex = url.indexOf('?');
+                    if (parmIndex == -1) {
+                        address = url.substring(4);
+                    } else {
+                        address = url.substring(4, parmIndex);
+
+                        // If body, then set sms body
+                        Uri uri = Uri.parse(url);
+                        String query = uri.getQuery();
+                        if (query != null) {
+                            if (query.startsWith("body=")) {
+                                intent.putExtra("sms_body", query.substring(5));
+                            }
+                        }
+                    }
+                    intent.setData(Uri.parse("sms:" + address));
+                    intent.putExtra("address", address);
+                    intent.setType("vnd.android-dir/mms-sms");
+                    cordova.getActivity().startActivity(intent);
+                    return true;
+                } catch (android.content.ActivityNotFoundException e) {
+                    LOG.e(LOG_TAG, "Error sending sms " + url + ":" + e.toString());
+                }
+            } else if (url.startsWith("intent:")) {
+                    webView.loadUrl("javascript:console.log('Clicked scheme: intent');");
+                    try {
+                        // Try to find an installed app
+                        Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                        if (intent.resolveActivity(packageManager) != null) {
+                                cordova.getActivity().startActivity(intent);
+                                return true;
+                        }
+                        // Try to open the fallback URL
+                        String fallbackUrl = intent.getStringExtra("browser_fallback_url");
+                        if (fallbackUrl != null) {
+                                webView.loadUrl(fallbackUrl);
+                                return true;
+                        }
+                        // Head to the Play Store and look for an app.
+                        Intent marketIntent = new Intent(Intent.ACTION_VIEW).setData(Uri.parse("market://details?id=" + intent.getPackage()));
+                        if (marketIntent.resolveActivity(packageManager) != null) {
+                                cordova.getActivity().startActivity(marketIntent);
+                                return true;
+                        }
+                    } catch (Exception e) {
+                        // Failed to do anything useful with it.
+                        LOG.e(LOG_TAG, "Failed to handle INTENT: " + e.toString() );
+                    }
+            }
+            return true;
         }
 
         /**
